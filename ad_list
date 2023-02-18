@@ -1,0 +1,5 @@
+! b站针对广告拦截器的横幅
+bilibili.com##.adblock-tips
+
+! 远景论坛烦人的广告栏
+bbs.pcbeta.com###wp>div[style]:matches-css(width : /980px/)
