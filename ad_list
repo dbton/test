@@ -3,3 +3,7 @@ bilibili.com##.adblock-tips
 
 ! 远景论坛烦人的广告栏
 bbs.pcbeta.com###wp>div[style]:matches-css(width : /980px/)
+
+! 知乎登陆弹窗
+static.zhihu.com/heifetz/chunks/3551.516896f9d8ed6c7d3bbe.js
+zhihu.com##.css-1ynzxqw
