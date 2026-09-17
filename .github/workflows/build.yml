@@ -1,0 +1,191 @@
+name: Build MIPS (BE, soft-float, musl) toolchain
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      mips_arch:
+        description: 'MIPS ISA (-march), e.g. mips32r2 / mips32 / mips1'
+        required: false
+        default: mips32r2
+
+env:
+  CT_NG_VERSION: 1.27.0
+  # 并行 xz 压缩
+  XZ_OPT: -9 -T0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build on Arch Linux x86_64
+    runs-on: ubuntu-latest
+    # 宿主机要求为 Arch Linux: 在 Arch 容器内构建, 产物链接到 Arch 的 glibc
+    container:
+      image: archlinux:base-devel
+    timeout-minutes: 240
+
+    steps:
+      - name: Install build dependencies (pacman)
+        run: |
+          echo "::group::pacman"
+          pacman -Sy --noconfirm --needed archlinux-keyring
+          pacman -Su --noconfirm --needed \
+            git wget curl which file unzip rsync \
+            help2man texinfo ncurses gperf bison flex \
+            libtool autoconf automake python \
+            xz bzip2 gzip zstd tar diffutils patch \
+            qemu-user-static
+          echo "::endgroup::"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache source tarballs
+        uses: actions/cache@v4
+        with:
+          path: tarballs
+          key: ct-ng-tarballs-${{ env.CT_NG_VERSION }}-${{ hashFiles('defconfig') }}
+          restore-keys: |
+            ct-ng-tarballs-${{ env.CT_NG_VERSION }}-
+            ct-ng-tarballs-
+
+      - name: Install crosstool-NG ${{ env.CT_NG_VERSION }}
+        run: |
+          curl -fsSL -o ct-ng.tar.xz \
+            "https://github.com/crosstool-ng/crosstool-ng/releases/download/crosstool-ng-${CT_NG_VERSION}/crosstool-ng-${CT_NG_VERSION}.tar.xz"
+          tar xf ct-ng.tar.xz
+          cd "crosstool-ng-${CT_NG_VERSION}"
+          echo "::group::configure / make / make install"
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          make install
+          echo "::endgroup::"
+          ct-ng version
+
+      - name: Configure toolchain
+        run: |
+          ARCH_IN="${{ github.event.inputs.mips_arch }}"
+          if [ -n "${ARCH_IN}" ]; then
+            sed -i "s/^CT_ARCH_ARCH=.*/CT_ARCH_ARCH=\"${ARCH_IN}\"/" defconfig
+          fi
+          ct-ng defconfig
+          CT_TARGET="$(ct-ng show-tuple)"
+          echo "CT_TARGET=${CT_TARGET}" >> "$GITHUB_ENV"
+          echo "Target tuple: ${CT_TARGET}"
+          grep -E '^CT_(ARCH|LIBC|CC|KERNEL)' .config | grep -v '^#' | sort
+
+      - name: Prefetch sources from reliable mirrors
+        # crosstool-NG 1.27.0 仍从 http://www.musl-libc.org 下载 musl, 该站点从 CI 网络经常超时。
+        # 这里先把包下到 CT_LOCAL_TARBALLS_DIR 并校验 ct-ng 自带的 SHA256, ct-ng 发现本地已有就不再下载。
+        run: |
+          mkdir -p tarballs
+          PKGS=/usr/local/share/crosstool-ng/packages
+          # fetch <file> <sha256> <url>...  : 依次尝试各 URL, 校验通过即停止
+          fetch() {
+            local file="$1" sum="$2" url; shift 2
+            if [ -f "tarballs/${file}" ] && echo "${sum}  tarballs/${file}" | sha256sum -c --status; then
+              echo "cached: ${file}"; return 0
+            fi
+            for url in "$@"; do
+              echo "trying ${url}"
+              if curl -fsSL --retry 3 --connect-timeout 30 -o "tarballs/${file}.tmp" "${url}" \
+                 && echo "${sum}  tarballs/${file}.tmp" | sha256sum -c --status; then
+                mv "tarballs/${file}.tmp" "tarballs/${file}"; echo "got: ${file}"; return 0
+              fi
+              rm -f "tarballs/${file}.tmp"
+            done
+            echo "::error::failed to fetch ${file} from all mirrors"; return 1
+          }
+
+          MUSL_VER="$(sed -n 's/^CT_MUSL_VERSION="\(.*\)"/\1/p' .config)"
+          MUSL_SUM="$(awk -v f="musl-${MUSL_VER}.tar.gz" '$1=="sha256" && $2==f {print $3}' "${PKGS}/musl/${MUSL_VER}/chksum")"
+          [ -n "${MUSL_VER}" ] && [ -n "${MUSL_SUM}" ] || { echo "::error::cannot determine musl version/checksum"; exit 1; }
+          fetch "musl-${MUSL_VER}.tar.gz" "${MUSL_SUM}" \
+            "https://musl.libc.org/releases/musl-${MUSL_VER}.tar.gz" \
+            "https://sources.buildroot.net/musl/musl-${MUSL_VER}.tar.gz" \
+            "https://sources.openwrt.org/musl-${MUSL_VER}.tar.gz"
+          ls -l tarballs
+
+      - name: Build toolchain
+        run: ct-ng build."$(nproc)"
+
+      - name: Show build error context
+        if: failure()
+        run: |
+          if [ ! -f build.log ]; then
+            echo "::error::no build.log was produced; the failure is in an earlier step, check its output"
+            exit 0
+          fi
+          echo "::group::All [ERROR] lines in build.log"
+          grep -n '\[ERROR\]' build.log | head -60 || true
+          echo "::endgroup::"
+          # ct-ng 在 build.log 末尾追加 [ERROR] 摘要; 真正的编译/配置错误在第一处 [ERROR] 之前的几百行里
+          n="$(grep -n -m1 '\[ERROR\]' build.log | cut -d: -f1 || true)"
+          if [ -n "${n}" ]; then
+            start=$(( n > 300 ? n - 300 : 1 ))
+            end=$(( n + 60 ))
+            echo "::group::build.log lines ${start}-${end} (context before the first [ERROR])"
+            sed -n "${start},${end}p" build.log
+            echo "::endgroup::"
+            echo "::error::ct-ng build failed, see the 'context before the first [ERROR]' group above; full log in the build-log artifact"
+          else
+            echo "::group::Last 200 lines of build.log"
+            tail -n 200 build.log
+            echo "::endgroup::"
+          fi
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+
+      - name: Smoke test (endianness, float ABI, run under qemu-mips)
+        run: |
+          export PATH="/opt/x-tools/${CT_TARGET}/bin:${PATH}"
+          "${CT_TARGET}-gcc" --version | head -1
+          cat > hello.c <<'SRC'
+          #include <stdio.h>
+          int main(void) {
+              volatile double x = 1.5;
+              printf("hello from mips big-endian soft-float, %g\n", x * 2);
+              return 0;
+          }
+          SRC
+          "${CT_TARGET}-gcc" -Os -static -s -o hello hello.c
+          "${CT_TARGET}-readelf" -h hello | grep -q "big endian"
+          "${CT_TARGET}-readelf" -A hello | grep -qi "soft"
+          "${CT_TARGET}-readelf" -h hello | grep -E 'Class|Data|Machine|Flags'
+          "${CT_TARGET}-readelf" -A hello
+          ls -l hello
+          qemu-mips-static ./hello
+
+      - name: Package
+        run: |
+          OUT="${CT_TARGET}-gcc-toolchain-x86_64-archlinux"
+          tar -C /opt/x-tools -cJf "${OUT}.tar.xz" "${CT_TARGET}"
+          sha256sum "${OUT}.tar.xz" > SHA256SUMS
+          ls -lh "${OUT}.tar.xz"
+          echo "OUT=${OUT}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUT }}
+          path: |
+            ${{ env.OUT }}.tar.xz
+            SHA256SUMS
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.OUT }}.tar.xz
+            SHA256SUMS

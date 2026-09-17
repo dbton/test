@@ -1,0 +1,55 @@
+# crosstool-NG defconfig
+# 宿主机: x86_64 Arch Linux
+# 目标机: MIPS, 大端 (big-endian), o32 ABI, 软浮点, musl libc (小体积, 适合低内存/低硬盘设备)
+
+CT_CONFIG_VERSION="4"
+CT_EXPERIMENTAL=y
+
+# CI 容器内以 root 运行, crosstool-NG 默认拒绝, 这里显式允许
+CT_ALLOW_BUILD_AS_ROOT=y
+CT_ALLOW_BUILD_AS_ROOT_SURE=y
+
+# 路径: 源码包缓存在仓库目录下 (便于 actions/cache), 安装到 /opt/x-tools/<tuple>
+CT_LOCAL_TARBALLS_DIR="${CT_TOP_DIR}/tarballs"
+CT_SAVE_TARBALLS=y
+# 下载连接超时 (秒), 默认 10 对 CI 网络偏短
+CT_CONNECT_TIMEOUT=30
+CT_PREFIX_DIR="/opt/x-tools/${CT_TARGET}"
+CT_REMOVE_DOCS=y
+
+# 日志
+# 关闭进度转轮: CI 不是交互终端, 转轮每次刷新都会变成一行 "[mm:ss] /", 几万行噪音淹没真正的报错
+# CT_LOG_PROGRESS_BAR is not set
+# 控制台只显示 EXTRA 及以上级别 (步骤名、下载/安装进度); 完整 DEBUG 日志仍写入 build.log
+CT_LOG_EXTRA=y
+# 不压缩 build.log, 失败时直接作为 artifact 上传
+# CT_LOG_FILE_COMPRESS is not set
+
+# 目标架构
+CT_ARCH_MIPS=y
+CT_ARCH_BE=y
+CT_ARCH_mips_o32=y
+CT_ARCH_FLOAT_SW=y
+# 绝大多数低端 MIPS 大端设备 (MT7620/AR71xx/AR9331 等 24Kc 核心) 为 mips32r2
+# 老设备可改为 mips32 或 mips1; 也可通过 workflow_dispatch 的 mips_arch 输入覆盖
+CT_ARCH_ARCH="mips32r2"
+
+# 目标侧库 (libgcc / libstdc++ / musl) 统一用 -Os 编译, 减小体积
+CT_TARGET_CFLAGS="-Os"
+
+# 三元组不含 vendor 字段, 例如 mips-linux-musl
+CT_OMIT_TARGET_VENDOR=y
+
+# 内核头文件
+CT_KERNEL_LINUX=y
+
+# C 库: musl (静态链接后单个 hello world 约 20KB, 远小于 glibc)
+CT_LIBC_MUSL=y
+
+# 编译器
+CT_CC_GCC=y
+CT_CC_LANG_CXX=y
+
+# 剥离符号, 减小工具链自身体积
+CT_STRIP_HOST_TOOLCHAIN_EXECUTABLES=y
+CT_STRIP_TARGET_TOOLCHAIN_EXECUTABLES=y

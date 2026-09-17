@@ -1,0 +1,6 @@
+.build/
+tarballs/
+.config
+.config.old
+build.log
+*.tar.xz
