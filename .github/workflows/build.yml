@@ -183,6 +183,8 @@ jobs:
       - name: Package
         run: |
           OUT="${CT_TARGET}-gcc-toolchain-x86_64-archlinux"
+          # 发布版在文件名里带上标签, 例如 ...-archlinux-v1.0.0.tar.xz
+          case "${GITHUB_REF}" in refs/tags/v*) OUT="${OUT}-${GITHUB_REF_NAME}" ;; esac
           tar -C /opt/x-tools -cJf "${OUT}.tar.xz" "${CT_TARGET}"
           sha256sum "${OUT}.tar.xz" > SHA256SUMS
           ls -lh "${OUT}.tar.xz"
@@ -196,10 +198,48 @@ jobs:
             ${{ env.OUT }}.tar.xz
             SHA256SUMS
 
+      - name: Write release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          ver() { sed -n "s/^CT_${1}_VERSION=\"\(.*\)\"/\1/p" .config; }
+          ARCH="$(sed -n 's/^CT_ARCH_ARCH="\(.*\)"/\1/p' .config)"
+          {
+            echo "## ${CT_TARGET} cross toolchain ${GITHUB_REF_NAME}"
+            echo
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Host | x86_64 Arch Linux (glibc) |"
+            echo "| Target | MIPS ${ARCH}, big-endian, o32 ABI, soft-float |"
+            echo "| C library | musl $(ver MUSL) |"
+            echo "| GCC | $(ver GCC) (C, C++) |"
+            echo "| binutils | $(ver BINUTILS) |"
+            echo "| Linux headers | $(ver LINUX) |"
+            echo "| crosstool-NG | ${CT_NG_VERSION} |"
+            echo
+            echo "Target-side libraries (musl, libgcc, libstdc++) are built with -Os; host and target binaries are stripped."
+            echo "Smoke test: a static hello-world was built, checked with readelf (big endian, soft-float) and executed under qemu-mips."
+            echo
+            echo "### Install"
+            echo '```sh'
+            echo "sudo tar -C /opt -xJf ${OUT}.tar.xz"
+            echo "export PATH=/opt/${CT_TARGET}/bin:\$PATH"
+            echo "${CT_TARGET}-gcc -Os -static -s -o hello hello.c"
+            echo '```'
+            echo
+            echo "### SHA256"
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ env.CT_TARGET }} toolchain ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          fail_on_unmatched_files: true
           files: |
             ${{ env.OUT }}.tar.xz
             SHA256SUMS

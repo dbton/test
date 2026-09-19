@@ -10,7 +10,11 @@
 ## 使用方法
 
 1. 把本目录推送到 GitHub 仓库的 `main` 分支, Actions 会自动构建。
-2. 在 Actions 页面下载 artifact, 或推送 `v*` 标签自动发布 Release。
+2. 在 Actions 页面下载 artifact, 或推送 `v*` 标签自动发布 Release (文件名带标签, 发布说明自动生成):
+
+   ```sh
+   git tag -a v1.0.1 -m "v1.0.1" && git push origin v1.0.1
+   ```
 3. 手动触发 (workflow_dispatch) 时可用 `mips_arch` 输入覆盖 ISA, 例如 `mips32` 或 `mips1`。
 
 ```sh
@@ -22,7 +26,7 @@ git push -u origin main
 ## 在 Arch Linux 上安装并使用
 
 ```sh
-sudo tar -C /opt -xJf mips-linux-musl-gcc-toolchain-x86_64-archlinux.tar.xz
+sudo tar -C /opt -xJf mips-linux-musl-gcc-toolchain-x86_64-archlinux-v1.0.0.tar.xz
 export PATH=/opt/mips-linux-musl/bin:$PATH
 mips-linux-musl-gcc -Os -static -s -ffunction-sections -fdata-sections -Wl,--gc-sections -o app app.c
 ```
