@@ -12,7 +12,9 @@ on:
         default: mips32r2
 
 env:
-  CT_NG_VERSION: 1.27.0
+  # 1.27.0 自带的 GMP 6.3.0 在 GCC 15+ (默认 -std=gnu23) 下 configure 报 "could not find a working compiler";
+  # 1.29.0 内置了修复补丁 (packages/gmp/6.3.0/0000-Complete-function-prototype-in-acinclude.patch)
+  CT_NG_VERSION: 1.29.0
   # 并行 xz 压缩
   XZ_OPT: -9 -T0
 
@@ -77,6 +79,8 @@ jobs:
           echo "CT_TARGET=${CT_TARGET}" >> "$GITHUB_ENV"
           echo "Target tuple: ${CT_TARGET}"
           grep -E '^CT_(ARCH|LIBC|CC|KERNEL)' .config | grep -v '^#' | sort
+          echo "Component versions:"
+          grep -E '^CT_[A-Z_]+_VERSION=' .config | sort
 
       - name: Prefetch sources from reliable mirrors
         # crosstool-NG 1.27.0 仍从 http://www.musl-libc.org 下载 musl, 该站点从 CI 网络经常超时。
@@ -137,13 +141,23 @@ jobs:
             tail -n 200 build.log
             echo "::endgroup::"
           fi
+          # configure 阶段失败时 (如 "could not find a working compiler"), 真正原因只在 config.log 里
+          latest="$(find .build -name config.log -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)"
+          if [ -n "${latest}" ]; then
+            echo "::group::Most recently written config.log: ${latest} (error lines)"
+            grep -n -E 'error:|Error [0-9]|undefined reference|cannot find|not found' "${latest}" | head -40 || true
+            echo "::endgroup::"
+          fi
 
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: build.log
+          path: |
+            build.log
+            .build/**/config.log
+          include-hidden-files: true
           if-no-files-found: ignore
 
       - name: Smoke test (endianness, float ABI, run under qemu-mips)
