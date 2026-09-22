@@ -1,0 +1,6 @@
+# RV64GC, lp64d ABI (双精度硬浮点)
+# 典型设备: 全志 D1 (平头哥 C906), 算能 CV1800B, StarFive JH7110
+CT_ARCH_RISCV=y
+CT_ARCH_64=y
+CT_ARCH_ARCH="rv64gc"
+CT_ARCH_ABI="lp64d"

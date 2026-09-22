@@ -1,4 +1,4 @@
-name: Build MIPS (BE, soft-float, musl) toolchain
+name: Build cross toolchains
 
 on:
   push:
@@ -6,29 +6,52 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      mips_arch:
-        description: 'MIPS ISA (-march), e.g. mips32r2 / mips32 / mips1'
+      targets:
+        description: '要构建的目标: targets/ 下的目录名, 逗号分隔; 或 all'
         required: false
-        default: mips32r2
+        default: all
+      extra_config:
+        description: '追加到 defconfig 末尾的配置行 (覆盖同名项), 例如 CT_ARCH_ARCH="mips32"'
+        required: false
+        default: ''
 
 env:
-  # 1.27.0 自带的 GMP 6.3.0 在 GCC 15+ (默认 -std=gnu23) 下 configure 报 "could not find a working compiler";
-  # 1.29.0 内置了修复补丁 (packages/gmp/6.3.0/0000-Complete-function-prototype-in-acinclude.patch)
+  # 1.27.0 自带的 GMP 6.3.0 在 GCC 15+ (默认 -std=gnu23) 下 configure 失败; 1.29.0 内置了修复补丁
   CT_NG_VERSION: 1.29.0
   # 并行 xz 压缩
   XZ_OPT: -9 -T0
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  matrix:
+    name: Select targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        env:
+          TARGETS: ${{ github.event.inputs.targets }}
+        run: |
+          list="$(scripts/list-targets.sh "${TARGETS}")"
+          echo "targets=${list}" >> "$GITHUB_OUTPUT"
+          echo "Targets: ${list}"
+
   build:
-    name: Build on Arch Linux x86_64
+    name: ${{ matrix.target }}
+    needs: matrix
     runs-on: ubuntu-latest
     # 宿主机要求为 Arch Linux: 在 Arch 容器内构建, 产物链接到 Arch 的 glibc
     container:
       image: archlinux:base-devel
     timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.matrix.outputs.targets) }}
 
     steps:
       - name: Install build dependencies (pacman)
@@ -50,8 +73,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tarballs
-          key: ct-ng-tarballs-${{ env.CT_NG_VERSION }}-${{ hashFiles('defconfig') }}
+          key: ct-ng-tarballs-${{ env.CT_NG_VERSION }}-${{ matrix.target }}-${{ hashFiles('common/defconfig', format('targets/{0}/defconfig', matrix.target)) }}
           restore-keys: |
+            ct-ng-tarballs-${{ env.CT_NG_VERSION }}-${{ matrix.target }}-
             ct-ng-tarballs-${{ env.CT_NG_VERSION }}-
             ct-ng-tarballs-
 
@@ -69,177 +93,75 @@ jobs:
           ct-ng version
 
       - name: Configure toolchain
+        env:
+          EXTRA_CONFIG: ${{ github.event.inputs.extra_config }}
         run: |
-          ARCH_IN="${{ github.event.inputs.mips_arch }}"
-          if [ -n "${ARCH_IN}" ]; then
-            sed -i "s/^CT_ARCH_ARCH=.*/CT_ARCH_ARCH=\"${ARCH_IN}\"/" defconfig
-          fi
-          ct-ng defconfig
-          CT_TARGET="$(ct-ng show-tuple)"
-          echo "CT_TARGET=${CT_TARGET}" >> "$GITHUB_ENV"
-          echo "Target tuple: ${CT_TARGET}"
-          grep -E '^CT_(ARCH|LIBC|CC|KERNEL)' .config | grep -v '^#' | sort
-          echo "Component versions:"
-          grep -E '^CT_[A-Z_]+_VERSION=' .config | sort
+          printf '%s\n' "${EXTRA_CONFIG}" > extra.defconfig
+          scripts/configure.sh "${{ matrix.target }}" extra.defconfig
 
       - name: Prefetch sources from reliable mirrors
-        # crosstool-NG 1.27.0 仍从 http://www.musl-libc.org 下载 musl, 该站点从 CI 网络经常超时。
-        # 这里先把包下到 CT_LOCAL_TARBALLS_DIR 并校验 ct-ng 自带的 SHA256, ct-ng 发现本地已有就不再下载。
-        run: |
-          mkdir -p tarballs
-          PKGS=/usr/local/share/crosstool-ng/packages
-          # fetch <file> <sha256> <url>...  : 依次尝试各 URL, 校验通过即停止
-          fetch() {
-            local file="$1" sum="$2" url; shift 2
-            if [ -f "tarballs/${file}" ] && echo "${sum}  tarballs/${file}" | sha256sum -c --status; then
-              echo "cached: ${file}"; return 0
-            fi
-            for url in "$@"; do
-              echo "trying ${url}"
-              if curl -fsSL --retry 3 --connect-timeout 30 -o "tarballs/${file}.tmp" "${url}" \
-                 && echo "${sum}  tarballs/${file}.tmp" | sha256sum -c --status; then
-                mv "tarballs/${file}.tmp" "tarballs/${file}"; echo "got: ${file}"; return 0
-              fi
-              rm -f "tarballs/${file}.tmp"
-            done
-            echo "::error::failed to fetch ${file} from all mirrors"; return 1
-          }
-
-          MUSL_VER="$(sed -n 's/^CT_MUSL_VERSION="\(.*\)"/\1/p' .config)"
-          MUSL_SUM="$(awk -v f="musl-${MUSL_VER}.tar.gz" '$1=="sha256" && $2==f {print $3}' "${PKGS}/musl/${MUSL_VER}/chksum")"
-          [ -n "${MUSL_VER}" ] && [ -n "${MUSL_SUM}" ] || { echo "::error::cannot determine musl version/checksum"; exit 1; }
-          fetch "musl-${MUSL_VER}.tar.gz" "${MUSL_SUM}" \
-            "https://musl.libc.org/releases/musl-${MUSL_VER}.tar.gz" \
-            "https://sources.buildroot.net/musl/musl-${MUSL_VER}.tar.gz" \
-            "https://sources.openwrt.org/musl-${MUSL_VER}.tar.gz"
-          ls -l tarballs
+        run: scripts/prefetch.sh
 
       - name: Build toolchain
         run: ct-ng build."$(nproc)"
 
       - name: Show build error context
         if: failure()
-        run: |
-          if [ ! -f build.log ]; then
-            echo "::error::no build.log was produced; the failure is in an earlier step, check its output"
-            exit 0
-          fi
-          echo "::group::All [ERROR] lines in build.log"
-          grep -n '\[ERROR\]' build.log | head -60 || true
-          echo "::endgroup::"
-          # ct-ng 在 build.log 末尾追加 [ERROR] 摘要; 真正的编译/配置错误在第一处 [ERROR] 之前的几百行里
-          n="$(grep -n -m1 '\[ERROR\]' build.log | cut -d: -f1 || true)"
-          if [ -n "${n}" ]; then
-            start=$(( n > 300 ? n - 300 : 1 ))
-            end=$(( n + 60 ))
-            echo "::group::build.log lines ${start}-${end} (context before the first [ERROR])"
-            sed -n "${start},${end}p" build.log
-            echo "::endgroup::"
-            echo "::error::ct-ng build failed, see the 'context before the first [ERROR]' group above; full log in the build-log artifact"
-          else
-            echo "::group::Last 200 lines of build.log"
-            tail -n 200 build.log
-            echo "::endgroup::"
-          fi
-          # configure 阶段失败时 (如 "could not find a working compiler"), 真正原因只在 config.log 里
-          latest="$(find .build -name config.log -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)"
-          if [ -n "${latest}" ]; then
-            echo "::group::Most recently written config.log: ${latest} (error lines)"
-            grep -n -E 'error:|Error [0-9]|undefined reference|cannot find|not found' "${latest}" | head -40 || true
-            echo "::endgroup::"
-          fi
+        run: scripts/error-context.sh
 
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
+          name: build-log-${{ matrix.target }}
           path: |
             build.log
             .build/**/config.log
           include-hidden-files: true
           if-no-files-found: ignore
 
-      - name: Smoke test (endianness, float ABI, run under qemu-mips)
-        run: |
-          export PATH="/opt/x-tools/${CT_TARGET}/bin:${PATH}"
-          "${CT_TARGET}-gcc" --version | head -1
-          cat > hello.c <<'SRC'
-          #include <stdio.h>
-          int main(void) {
-              volatile double x = 1.5;
-              printf("hello from mips big-endian soft-float, %g\n", x * 2);
-              return 0;
-          }
-          SRC
-          "${CT_TARGET}-gcc" -Os -static -s -o hello hello.c
-          "${CT_TARGET}-readelf" -h hello | grep -q "big endian"
-          "${CT_TARGET}-readelf" -A hello | grep -qi "soft"
-          "${CT_TARGET}-readelf" -h hello | grep -E 'Class|Data|Machine|Flags'
-          "${CT_TARGET}-readelf" -A hello
-          ls -l hello
-          qemu-mips-static ./hello
+      - name: Smoke test
+        run: scripts/smoke-test.sh "${CT_TARGET}"
 
       - name: Package
-        run: |
-          OUT="${CT_TARGET}-gcc-toolchain-x86_64-archlinux"
-          # 发布版在文件名里带上标签, 例如 ...-archlinux-v1.0.0.tar.xz
-          case "${GITHUB_REF}" in refs/tags/v*) OUT="${OUT}-${GITHUB_REF_NAME}" ;; esac
-          tar -C /opt/x-tools -cJf "${OUT}.tar.xz" "${CT_TARGET}"
-          sha256sum "${OUT}.tar.xz" > SHA256SUMS
-          ls -lh "${OUT}.tar.xz"
-          echo "OUT=${OUT}" >> "$GITHUB_ENV"
+        run: scripts/package.sh "${{ matrix.target }}" "${CT_TARGET}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.OUT }}
-          path: |
-            ${{ env.OUT }}.tar.xz
-            SHA256SUMS
+          path: dist/*
 
-      - name: Write release notes
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all toolchain artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: '*-toolchain-*'
+          merge-multiple: true
+
+      - name: Assemble release notes
         run: |
-          ver() { sed -n "s/^CT_${1}_VERSION=\"\(.*\)\"/\1/p" .config; }
-          ARCH="$(sed -n 's/^CT_ARCH_ARCH="\(.*\)"/\1/p' .config)"
-          {
-            echo "## ${CT_TARGET} cross toolchain ${GITHUB_REF_NAME}"
-            echo
-            echo "| Item | Value |"
-            echo "|---|---|"
-            echo "| Host | x86_64 Arch Linux (glibc) |"
-            echo "| Target | MIPS ${ARCH}, big-endian, o32 ABI, soft-float |"
-            echo "| C library | musl $(ver MUSL) |"
-            echo "| GCC | $(ver GCC) (C, C++) |"
-            echo "| binutils | $(ver BINUTILS) |"
-            echo "| Linux headers | $(ver LINUX) |"
-            echo "| crosstool-NG | ${CT_NG_VERSION} |"
-            echo
-            echo "Target-side libraries (musl, libgcc, libstdc++) are built with -Os; host and target binaries are stripped."
-            echo "Smoke test: a static hello-world was built, checked with readelf (big endian, soft-float) and executed under qemu-mips."
-            echo
-            echo "### Install"
-            echo '```sh'
-            echo "sudo tar -C /opt -xJf ${OUT}.tar.xz"
-            echo "export PATH=/opt/${CT_TARGET}/bin:\$PATH"
-            echo "${CT_TARGET}-gcc -Os -static -s -o hello hello.c"
-            echo '```'
-            echo
-            echo "### SHA256"
-            echo '```'
-            cat SHA256SUMS
-            echo '```'
-          } > RELEASE_NOTES.md
+          scripts/release-notes.sh dist > RELEASE_NOTES.md
           cat RELEASE_NOTES.md
+          ls -l dist
 
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ env.CT_TARGET }} toolchain ${{ github.ref_name }}
+          name: Toolchains ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           fail_on_unmatched_files: true
           files: |
-            ${{ env.OUT }}.tar.xz
-            SHA256SUMS
+            dist/*.tar.xz
+            dist/SHA256SUMS

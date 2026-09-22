@@ -1,6 +1,11 @@
+# crosstool-NG 工作文件 (都在仓库根目录生成)
 .build/
 tarballs/
 .config
 .config.old
 build.log
+/defconfig
+/defconfig.log
+/extra.defconfig
+dist/
 *.tar.xz

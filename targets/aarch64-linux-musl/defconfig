@@ -1,0 +1,5 @@
+# ARMv8-A 64 位
+# 典型设备: MT7622 / IPQ807x / RK33xx / 全志 H5、H6 / 树莓派 3 及以后
+CT_ARCH_ARM=y
+CT_ARCH_64=y
+CT_ARCH_LE=y

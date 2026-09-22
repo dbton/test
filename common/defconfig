@@ -1,0 +1,35 @@
+# 所有目标共用的策略。
+# 架构相关的选项 (架构、端序、浮点、ABI、CPU) 放在 targets/<name>/defconfig。
+# scripts/configure.sh 按 "common + target (+ extra)" 顺序拼接后交给 ct-ng defconfig;
+# 后写的赋值覆盖先写的 (kconfig 会打印 override 警告, 这是预期行为)。
+
+CT_CONFIG_VERSION="4"
+CT_EXPERIMENTAL=y
+
+# CI 容器内以 root 运行
+CT_ALLOW_BUILD_AS_ROOT=y
+CT_ALLOW_BUILD_AS_ROOT_SURE=y
+
+# 路径: 源码包缓存在仓库根目录 tarballs/ (各目标共享, 由 actions/cache 缓存); 安装到 /opt/x-tools/<tuple>
+CT_LOCAL_TARBALLS_DIR="${CT_TOP_DIR}/tarballs"
+CT_SAVE_TARBALLS=y
+CT_CONNECT_TIMEOUT=30
+CT_PREFIX_DIR="/opt/x-tools/${CT_TARGET}"
+CT_REMOVE_DOCS=y
+
+# 日志: 关闭进度转轮 (CI 下每次刷新都是一行噪音); 控制台 EXTRA 级别; build.log 不压缩以便直接上传
+# CT_LOG_PROGRESS_BAR is not set
+CT_LOG_EXTRA=y
+# CT_LOG_FILE_COMPRESS is not set
+
+# 面向低内存 / 低存储设备: musl libc, 目标侧库 -Os, 三元组不带 vendor, 全部 strip
+CT_TARGET_CFLAGS="-Os"
+CT_OMIT_TARGET_VENDOR=y
+CT_KERNEL_LINUX=y
+# Linux 目标都需要 MMU; MIPS/ARM 默认已启用, 但 RISC-V 等架构在 ct-ng 里默认为 no-MMU, 会导致 "Unsupported no-mmu arch"
+CT_ARCH_USE_MMU=y
+CT_LIBC_MUSL=y
+CT_CC_GCC=y
+CT_CC_LANG_CXX=y
+CT_STRIP_HOST_TOOLCHAIN_EXECUTABLES=y
+CT_STRIP_TARGET_TOOLCHAIN_EXECUTABLES=y

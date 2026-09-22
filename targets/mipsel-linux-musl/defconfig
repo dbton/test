@@ -1,0 +1,7 @@
+# MIPS32r2, 小端, o32 ABI, 软浮点
+# 典型设备: MT7621 (1004Kc) / MT7628 / MT7688 等路由器
+CT_ARCH_MIPS=y
+CT_ARCH_LE=y
+CT_ARCH_mips_o32=y
+CT_ARCH_FLOAT_SW=y
+CT_ARCH_ARCH="mips32r2"

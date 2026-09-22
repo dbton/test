@@ -1,0 +1,8 @@
+# ARMv5TE, 软浮点, EABI, ARM 指令模式
+# 典型设备: Marvell Kirkwood / Orion NAS, ARM926EJ-S 类老 SoC
+CT_ARCH_ARM=y
+CT_ARCH_LE=y
+CT_ARCH_ARCH="armv5te"
+CT_ARCH_FLOAT_SW=y
+CT_ARCH_ARM_MODE_ARM=y
+CT_ARCH_ARM_EABI=y
