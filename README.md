@@ -145,6 +145,7 @@ tests/                   host、打包合并与冒烟执行回归测试
 
 - **定位报错**: 构建失败时, "Show build error context" 步骤会打印 `build.log` 里所有 `[ERROR]` 行、第一处 `[ERROR]` 之前 300 行的上下文, 以及最近一次 configure 的 `config.log` 错误行; 完整日志作为 `build-log-<target>-<host>` artifact 上传。
 - **host 不匹配**: 检查所选 runner 的 CPU 和容器的 `/etc/os-release`, 修改 `HOST_NAME` 不能改变编译器架构。ARM64 host 需要可用的 `ubuntu-24.04-arm` runner; 没有该 runner 的仓库可手动只选 x86_64 host, 或在注册表中配置对应的自托管 ARM64 runner 标签。
+- **binutils 报 `--with-zstd was given, but pkgconfig/libzstd.pc is not found`**: 仅安装 `zstd` 命令不够, 还需要 pkg-config 和开发库的 `.pc` 文件。Ubuntu 安装 `pkg-config libzstd-dev`, Arch 安装 `pkgconf zstd`; 用 `pkg-config --modversion libzstd` 检查。CI 已显式安装并检查这些依赖。修复 workflow 后需基于包含修复的新提交触发构建; 重跑旧任务仍会使用旧版 workflow。
 - **`Installing GMP for host` 阶段 `configure: error: could not find a working compiler`**: Arch 的 gcc 已是 16.x, 默认 C23。GMP 6.3.0 的 configure 测试程序里 `void g(){}` 被带 6 个参数调用, 在 C23 下报 `too many arguments`。crosstool-NG 1.29.0 自带补丁; 若必须用旧版 ct-ng, 在 common/defconfig 加 `CT_EXTRA_CFLAGS_FOR_HOST="-std=gnu17"`。
 - **`musl: download failed`**: 官方站点从 CI 网络经常超时。`scripts/prefetch.sh` 会先从 musl.libc.org / buildroot / openwrt 镜像下载并校验 SHA256。其他包下载失败时, 在该脚本里按同样方式再加一行 `fetch`。
 - **日志噪音**: `common/defconfig` 已关闭 ct-ng 的进度转轮; 控制台只输出 EXTRA 级别, 完整 DEBUG 日志在 `build.log`。

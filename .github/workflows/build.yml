@@ -80,7 +80,7 @@ jobs:
               pacman -Su --noconfirm --needed \
                 git wget curl which file unzip rsync \
                 help2man texinfo ncurses gperf bison flex \
-                libtool autoconf automake python \
+                libtool autoconf automake python pkgconf \
                 xz bzip2 gzip zstd tar diffutils patch \
                 qemu-user-static
               ;;
@@ -90,12 +90,14 @@ jobs:
               apt-get install -y --no-install-recommends \
                 build-essential ca-certificates git wget curl file unzip rsync gawk debianutils \
                 help2man texinfo libncurses-dev gperf bison flex \
-                libtool libtool-bin autoconf automake python3 \
+                libtool libtool-bin autoconf automake python3 pkg-config libzstd-dev \
                 xz-utils bzip2 gzip zstd tar diffutils patch \
                 qemu-user
               ;;
             *) echo "::error::unsupported package manager '${PACKAGE_MANAGER}'"; exit 1 ;;
           esac
+          # zstd 命令不提供开发文件; binutils --with-zstd 还需要 pkg-config 和 libzstd.pc。
+          pkg-config --modversion libzstd
           echo "::endgroup::"
 
       - name: Checkout
