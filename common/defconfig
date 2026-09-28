@@ -1,10 +1,12 @@
 # 所有目标共用的策略。
 # 架构相关的选项 (架构、端序、浮点、ABI、CPU) 放在 targets/<name>/defconfig。
+# host 的 runner / 容器放在 hosts.json; 在对应 host 上原生构建交叉编译器。
 # scripts/configure.sh 按 "common + target (+ extra)" 顺序拼接后交给 ct-ng defconfig;
 # 后写的赋值覆盖先写的 (kconfig 会打印 override 警告, 这是预期行为)。
 
 CT_CONFIG_VERSION="4"
 CT_EXPERIMENTAL=y
+CT_CROSS=y
 
 # CI 容器内以 root 运行
 CT_ALLOW_BUILD_AS_ROOT=y

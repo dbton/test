@@ -10,6 +10,10 @@ on:
         description: '要构建的目标: targets/ 下的目录名, 逗号分隔; 或 all'
         required: false
         default: all
+      hosts:
+        description: '运行工具链的 host: hosts.json 中的名称, 逗号分隔; 或 all'
+        required: false
+        default: all
       extra_config:
         description: '追加到 defconfig 末尾的配置行 (覆盖同名项), 例如 CT_ARCH_ARCH="mips32"'
         required: false
@@ -26,54 +30,85 @@ permissions:
 
 jobs:
   matrix:
-    name: Select targets
-    runs-on: ubuntu-latest
+    name: Select hosts and targets
+    runs-on: ubuntu-24.04
     outputs:
       targets: ${{ steps.list.outputs.targets }}
+      hosts: ${{ steps.list.outputs.hosts }}
     steps:
       - uses: actions/checkout@v4
       - id: list
         env:
           TARGETS: ${{ github.event.inputs.targets }}
+          HOSTS: ${{ github.event.inputs.hosts }}
         run: |
           list="$(scripts/list-targets.sh "${TARGETS}")"
           echo "targets=${list}" >> "$GITHUB_OUTPUT"
           echo "Targets: ${list}"
+          host_matrix="$(python3 scripts/hosts.py list "${HOSTS}")"
+          echo "hosts=${host_matrix}" >> "$GITHUB_OUTPUT"
+          echo "Hosts: ${host_matrix}"
 
   build:
-    name: ${{ matrix.target }}
+    name: ${{ matrix.target }} / ${{ matrix.host.name }}
     needs: matrix
-    runs-on: ubuntu-latest
-    # 宿主机要求为 Arch Linux: 在 Arch 容器内构建, 产物链接到 Arch 的 glibc
+    runs-on: ${{ matrix.host.runner }}
+    # 在相同 CPU 架构的 Linux runner 上原生构建; 容器决定 host 的 libc 基线。
     container:
-      image: archlinux:base-devel
+      image: ${{ matrix.host.container }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOST_NAME: ${{ matrix.host.name }}
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         target: ${{ fromJSON(needs.matrix.outputs.targets) }}
+        host: ${{ fromJSON(needs.matrix.outputs.hosts) }}
 
     steps:
-      - name: Install build dependencies (pacman)
+      - name: Install build dependencies
+        env:
+          PACKAGE_MANAGER: ${{ matrix.host.package_manager }}
         run: |
-          echo "::group::pacman"
-          pacman -Sy --noconfirm --needed archlinux-keyring
-          pacman -Su --noconfirm --needed \
-            git wget curl which file unzip rsync \
-            help2man texinfo ncurses gperf bison flex \
-            libtool autoconf automake python \
-            xz bzip2 gzip zstd tar diffutils patch \
-            qemu-user-static
+          echo "::group::${PACKAGE_MANAGER}"
+          case "${PACKAGE_MANAGER}" in
+            pacman)
+              pacman -Sy --noconfirm --needed archlinux-keyring
+              pacman -Su --noconfirm --needed \
+                git wget curl which file unzip rsync \
+                help2man texinfo ncurses gperf bison flex \
+                libtool autoconf automake python \
+                xz bzip2 gzip zstd tar diffutils patch \
+                qemu-user-static
+              ;;
+            apt)
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                build-essential ca-certificates git wget curl file unzip rsync gawk debianutils \
+                help2man texinfo libncurses-dev gperf bison flex \
+                libtool libtool-bin autoconf automake python3 \
+                xz-utils bzip2 gzip zstd tar diffutils patch \
+                qemu-user
+              ;;
+            *) echo "::error::unsupported package manager '${PACKAGE_MANAGER}'"; exit 1 ;;
+          esac
           echo "::endgroup::"
 
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify build host
+        run: python3 scripts/hosts.py check "${HOST_NAME}"
+
       - name: Cache source tarballs
         uses: actions/cache@v4
         with:
           path: tarballs
-          key: ct-ng-tarballs-${{ env.CT_NG_VERSION }}-${{ matrix.target }}-${{ hashFiles('common/defconfig', format('targets/{0}/defconfig', matrix.target)) }}
+          key: ct-ng-tarballs-${{ env.CT_NG_VERSION }}-${{ matrix.target }}-${{ hashFiles('common/defconfig', format('targets/{0}/defconfig', matrix.target)) }}-${{ matrix.host.name }}
           restore-keys: |
             ct-ng-tarballs-${{ env.CT_NG_VERSION }}-${{ matrix.target }}-
             ct-ng-tarballs-${{ env.CT_NG_VERSION }}-
@@ -113,7 +148,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-${{ matrix.target }}
+          name: build-log-${{ matrix.target }}-${{ matrix.host.name }}
           path: |
             build.log
             .build/**/config.log
@@ -121,6 +156,8 @@ jobs:
           if-no-files-found: ignore
 
       - name: Smoke test
+        env:
+          REQUIRE_EXECUTION: '1'
         run: scripts/smoke-test.sh "${CT_TARGET}"
 
       - name: Package

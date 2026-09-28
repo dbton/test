@@ -1,0 +1,20 @@
+{
+  "x86_64-archlinux": {
+    "runner": "ubuntu-24.04",
+    "container": "archlinux:base-devel",
+    "package_manager": "pacman",
+    "arch": "x86_64",
+    "os_id": "arch",
+    "version_id": "",
+    "label": "x86_64 Arch Linux (rolling)"
+  },
+  "aarch64-ubuntu22.04": {
+    "runner": "ubuntu-24.04-arm",
+    "container": "ubuntu:22.04",
+    "package_manager": "apt",
+    "arch": "aarch64",
+    "os_id": "ubuntu",
+    "version_id": "22.04",
+    "label": "aarch64 Ubuntu 22.04"
+  }
+}

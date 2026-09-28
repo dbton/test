@@ -6,7 +6,7 @@
 #    (浮点 ABI 只有 MIPS、32 位 ARM、RISC-V、PowerPC 记录在 ELF 中, 其他架构跳过该项);
 # 3. 在 qemu-user 下运行测试程序 (目标与宿主机同架构时直接运行; 没有对应 qemu 时告警并跳过)。
 #
-# 环境变量: XTOOLS_DIR (默认 /opt/x-tools)
+# 环境变量: XTOOLS_DIR (默认 /opt/x-tools), REQUIRE_EXECUTION=1 (缺少 runner 时失败, CI 启用)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -152,14 +152,23 @@ if [ -n "${q}" ]; then
     if command -v "${c}" >/dev/null; then runner="${c}"; break; fi
   done
 fi
-if [ -z "${runner}" ] && [ "${cpu}" = "$(uname -m)" ]; then
+# 动态目标需要其 sysroot 中的加载器/库, 即使 CPU 相同也不能直接使用 host 的 libc。
+if [ -z "${runner}" ] && [ "${link_static}" = 1 ] && [ "$(uname -s)" = Linux ] && [ "${cpu}" = "$(uname -m)" ]; then
   runner="env"   # 与宿主机同架构, 直接运行
 fi
 if [ -z "${runner}" ]; then
-  echo "::warning::no qemu-user binary for '${cpu}'; skipping execution test"
+  if [ "${REQUIRE_EXECUTION:-0}" = 1 ]; then
+    echo "FAIL no qemu-user binary or native runner for '${cpu}'"; fail=1
+  else
+    echo "::warning::no qemu-user binary for '${cpu}'; skipping execution test"
+  fi
 else
+  runner_args=()
+  if [ "${link_static}" = 0 ]; then
+    runner_args=(-L "$("${CC}" -print-sysroot)")
+  fi
   for b in "${bins[@]}"; do
-    if out="$("${runner}" "${b}" 2>&1)"; then
+    if out="$("${runner}" "${runner_args[@]}" "${b}" 2>&1)"; then
       echo "run  $(basename "${b}") via ${runner}: ${out}"
       grep -q '^hello from' <<<"${out}" || { echo "FAIL unexpected output from $(basename "${b}")"; fail=1; }
     else

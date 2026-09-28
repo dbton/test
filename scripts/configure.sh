@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # 用法: configure.sh <target> [extra-defconfig-file]
 # 把 common/defconfig + targets/<target>/defconfig (+ 额外覆盖文件) 拼接成仓库根目录的 defconfig,
-# 运行 ct-ng defconfig, 打印三元组、关键设置���组件版本。
+# 运行 ct-ng defconfig, 打印三元组、关键设置和组件版本。
 # 在 GitHub Actions 中运行时把 CT_TARGET / TARGET_NAME 写入 $GITHUB_ENV。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 target="${1:?usage: configure.sh <target> [extra-defconfig-file]}"
 extra="${2:-}"
+[[ "${target}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "::error::invalid target name '${target}'" >&2; exit 1; }
 [ -f "targets/${target}/defconfig" ] || { echo "::error::unknown target '${target}' (no targets/${target}/defconfig)"; exit 1; }
 
 {
@@ -26,6 +27,12 @@ extra="${2:-}"
 ct-ng defconfig 2>&1 | tee defconfig.log
 if grep -q 'warning: override' defconfig.log; then
   echo "note: 'override' warnings above mean a later line replaced an earlier one; expected when extra overrides are given"
+fi
+
+# 多 host CI 在对应 runner 上原生构建, 不使用 Canadian cross。
+if [ -n "${HOST_NAME:-}" ]; then
+  python3 scripts/hosts.py check "${HOST_NAME}"
+  grep -qx 'CT_TOOLCHAIN_TYPE="cross"' .config || { echo "::error::HOST_NAME requires CT_CROSS=y" >&2; exit 1; }
 fi
 
 if ! tuple_out="$(ct-ng show-tuple 2>&1)"; then

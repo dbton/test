@@ -15,7 +15,14 @@ else
   for p in "${parts[@]}"; do
     p="$(printf '%s' "${p}" | tr -d '[:space:]')"
     [ -n "${p}" ] || continue
+    [[ "${p}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "::error::invalid target name '${p}'" >&2; exit 1; }
     [ -f "targets/${p}/defconfig" ] || { echo "::error::unknown target '${p}' (no targets/${p}/defconfig)" >&2; exit 1; }
+    # 重复项会让同一 host/target 的 artifact 上传冲突。
+    duplicate=0
+    for name in "${names[@]}"; do
+      if [ "${name}" = "${p}" ]; then duplicate=1; break; fi
+    done
+    [ "${duplicate}" = 0 ] || continue
     names+=("${p}")
   done
 fi

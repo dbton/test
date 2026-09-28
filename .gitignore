@@ -9,3 +9,4 @@ build.log
 /extra.defconfig
 dist/
 *.tar.xz
+__pycache__/

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 构建失败时打印定位信息: build.log 中所有 [ERROR] 行、第一处 [ERROR] 之前的上下文、最近一次 configure 的 config.log 错误行。
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 if [ ! -f build.log ]; then
   echo "::error::no build.log was produced; the failure is in an earlier step, check its output"
